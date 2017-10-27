@@ -1,0 +1,22 @@
+installation script
+	setup the db
+	download the files
+	setup the cron jobs
+Data structure
+	mongo db into json: 
+Website
+	Overall/ general
+		Consider pagepiling instead of separate pages for navigation (https://github.com/alvarotrigo/pagePiling.js)
+		other transition idea: https://github.com/luruke/barba.js
+	Homepage - Stats page
+		Create chart to go with the table
+	Control page
+		Battery level auto settings
+		Battery scheduling
+	Map page
+		sliders
+			New slider for number of points (http://skidding.github.io/dragdealer/ )
+			Dates
+			Distances apart
+			speeds
+		Create summary table
