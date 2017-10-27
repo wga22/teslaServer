@@ -1,0 +1,536 @@
+
+
+<html>
+  <head>
+  <title>TMap</title>
+	<link href="https://cdn.datatables.net/1.10.9/css/jquery.dataTables.min.css" rel="stylesheet" title="data tables"/>
+	<!-- <base href="http://willallencoding.scienceontheweb.net/"></base> -->
+	<style type="text/css">
+	  body { background-color: #ddd; font-family:arial; font-size:10}
+	  td { font-family:arial; font-size:10}
+	  th { font-family:arial; font-size:10}
+	  #container { height: 80%; width: 100%; display: table; }
+	  #inner { vertical-align: middle; display: table-cell; }
+	  #map { width: 100%; height:80%; margin: 0 auto; }
+	</style>
+
+	<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+	<script type="text/javascript" src="https://cdn.datatables.net/1.10.9/js/jquery.dataTables.min.js"></script>
+	<script type='text/javascript'>
+
+
+	Array.prototype.average = function () {
+		var sum = 0, j = 0; 
+	   for (var i = 0; i < this.length, isFinite(this[i]); i++) { 
+			  sum += parseFloat(this[i]); ++j; 
+		} 
+	   return j ? sum / j : 0; 
+	};	
+	
+	//<https://code.jquery.com/jquery-1.10.2.js
+	//#map { width: 360px; height:200px; margin: 0 auto; }
+	// set your channel id here
+	var channel_id = 39919;
+	// set your channel's read api key here if necessary
+	var api_key = 'FSOH5JIDQ8N52Q3V';
+	var NMONTHSTOLOAD = 24;
+	var nLoadedMonths = 0;
+	var InitialRatedIdealRange = 276;	//initial rated ideal range
+	var InitialRatedExpectedRange = 240;	//initial rated expected range
+
+	// global variables
+	var map;
+	var nDataPoints = 0;
+
+	var sImagePath = "./images/";
+	var sTPURL = 'https://api.thingspeak.com/channels/'+channel_id+'/feeds.json?timezone=America%2FNew_York&status=true&api_key=' + api_key;
+
+	var oMaxSpeed = {speed: 0, date: (new Date(0))};
+	var oMarkers = {};
+	var sCurrentPosMark = null;
+	var oMonthofData = {};
+	var oDateRange = {ntBegin:Date.now()+33333, ntEnd:0}
+	var oFields = {ODOMETER: "field3", IDEAL_RANGE:"field6", ESTIMATED_RANGE:"field5", 
+		BATTERY_LEVEL:"field1", LATITUDE:"field7", 
+		LONGITUDE:"field8", SPEED:"field2", VERSION:"status"};
+	/*
+	oFields.ODOMETER
+	oFields.IDEAL_RANGE
+	oFields.ESTIMATED_RANGE
+	oFields.BATTERY_LEVEL
+	oFields.LATITUDE
+	oFields.LONGITUDE
+	oFields.SPEED
+	*/
+	
+	
+	var oIcons = {0:"stopped.png", 1:"car_01.png", 2:"car_02.png", 3:"car_03.png",
+				  4:"car_04.png", 5:"car_05.png", 5:"car_06.png",
+				  6:"car_06.png", 7:"car_07.png", 8:"car_08.png",
+				  9:"car_09.png", 10:"car_10.png", 
+				  stopped:"stopped.png", moving:"moving.png"}
+	
+	function loadMarkers()
+	{
+		var oMonthToLoad = new Date();
+		oMonthToLoad.setMonth(oMonthToLoad.getMonth()+1);	//increment the date one month forward
+		for(var x=0; x < NMONTHSTOLOAD; x++)
+		{
+			//  start (datetime) Start date in format YYYY-MM-DD%20HH:NN:SS (optional) (stop is the same)
+			var sStopDate = getDateToTSStringFirstDay(oMonthToLoad);
+			oMonthToLoad.setMonth(oMonthToLoad.getMonth()-1)
+			var sTPURLbyDate =  sTPURL+ "&start=" + getDateToTSStringFirstDay(oMonthToLoad) + "&end=" + sStopDate;
+			//$('#debug').append("<li>"+sTPURLbyDate+"</li>");
+			
+			$.getJSON(sTPURLbyDate, function(data)
+			{
+				var nCnt = 0;
+				$.each(data.feeds, function() 
+				{
+					var nLat = parseFloat(this[oFields.LATITUDE]);
+					var nLng = parseFloat(this[oFields.LONGITUDE]);
+					var nSpeed = parseFloat(this[oFields.SPEED]);
+					var oDate = new Date(this["created_at"]);
+					var nIdealRange = parseFloat(this[oFields.IDEAL_RANGE]);
+					var nOdometer = parseFloat(this[oFields.ODOMETER]);
+					var nEstRange = parseFloat(this[oFields.ESTIMATED_RANGE]);
+					var nBattLevel = parseFloat(this[oFields.BATTERY_LEVEL]);
+					var sVersion = this[oFields.VERSION] ? this[oFields.VERSION] : "";
+					var sCurrMonth = getYearMonthStr(oDate);
+					
+					if(!oMonthofData[sCurrMonth])
+					{
+						oMonthofData[sCurrMonth] = new MonthOfResults(sCurrMonth);
+					}
+					oMonthofData[sCurrMonth].setOdometer(nOdometer);
+					oMonthofData[sCurrMonth].setVersion(sVersion);
+					//needed? oMonthofData[sCurrMonth].setYearMonth(sCurrMonth);
+					
+					//check if valid range values
+					if(nEstRange && nIdealRange && nBattLevel)	//all should be non-0 and !NAN
+					{
+						oMonthofData[sCurrMonth].addIdealRange(nIdealRange,nBattLevel);
+						oMonthofData[sCurrMonth].addEstRange(nEstRange,nBattLevel);
+						//$('#debug').append("<li>ideal: " +nIdealRange+ " est range: "+nEstRange+" battery:"+nBattLevel+" month: "+sCurrMonth+"</li>")
+						//$('#debug').append("<li>ideal raw: " + nIdealRange + " ideal range: "+(nIdealRange / (nBattLevel*.01))+
+						//	" battery:"+nBattLevel+" month: "+sCurrMonth+"</li>")
+					}		
+					nSpeed = (nSpeed) ? nSpeed : 0;
+					if(oMaxSpeed.speed < nSpeed)
+					{
+						oMaxSpeed.speed = nSpeed;
+						oMaxSpeed.date = oDate;						
+					}
+					
+					if(nLat && nLng  )
+					{
+						var sLoc = Math.round(nLat*1000)+""+Math.round(nLng*1000);
+						var nTime = oDate.getTime();
+						if(nTime < oDateRange.ntBegin){oDateRange.ntBegin = nTime}
+						if(nTime > oDateRange.ntEnd)
+						{
+							oDateRange.ntEnd = nTime;
+							sCurrentPosMark = sLoc;
+						}
+						var sDateString = oDate.toDateString();
+						nDataPoints++;
+						if(oMarkers[sLoc])
+						{
+							//only count 1x per day, and dont bother adding more than 10 dates
+							if(!oMarkers[sLoc].hDates[sDateString] && oMarkers[sLoc].nCnt <= 10)	
+							{
+								oMarkers[sLoc].nCnt = oMarkers[sLoc].nCnt+1;
+								oMarkers[sLoc].hDates[sDateString] = true;
+								oMarkers[sLoc].title = oMarkers[sLoc].title + '\n' + sDateString;
+							}
+						}
+						else
+						{
+							var ohDates = {};
+							ohDates[sDateString] = true;
+							oMarkers[sLoc] = {position:{lat: nLat, lng: nLng}, title:sDateString, hDates: ohDates, speed: nSpeed, nCnt:1};
+						}
+					}
+				})
+				nLoadedMonths++;
+			})
+		}	// for loop
+	}
+
+	function waitThenDrawMarkers()
+	{
+		if(nLoadedMonths >= NMONTHSTOLOAD)
+		{
+			drawMarkers();
+			computeAge();
+		}
+		else
+		{
+			//$('#debug').append("<li>Finished loading: "+nLoadedMonths+" months of data.</li>")
+			setTimeout("waitThenDrawMarkers()", 2000);
+		}
+	}
+
+	function drawMarkers()
+	{
+		var nMarkersDrawn= 0;
+		//$('#debug').append("<li>num markers: "+oMarkers.length+" " +nLoadedMonths+"</li>")
+		//var sDateString = (new Date(oDateRange.ntEnd)).toDateString()
+		for(var x in oMarkers)
+		{
+			var oMark = oMarkers[x];
+			nMarkersDrawn++;
+			if(x == sCurrentPosMark)
+			{
+				continue;
+			}
+			else if(oMark.speed > 0)
+			{
+				var marker = new google.maps.Marker({
+					map: map,
+					icon: sImagePath + oIcons["moving"],
+					position: oMark.position,
+					title: (oMark.title + " spd:" + oMark.speed)
+					});
+			}
+			else if(oMark.nCnt > 10)
+			{
+				var marker = new google.maps.Marker({
+					map: map,
+					icon: sImagePath + oIcons[10],
+					position: oMark.position,
+					title: oMark.title
+					});
+			}
+			else
+			{
+				var marker = new google.maps.Marker({
+					map: map,
+					icon: sImagePath + oIcons[oMark.nCnt],
+					position: oMark.position,
+					title: oMark.title
+					});
+			}
+		}
+
+		if(oMarkers[sCurrentPosMark])
+		{
+			var marker = new google.maps.Marker({
+					map: map,
+					icon: sImagePath + oIcons["stopped"],
+					position: oMarkers[sCurrentPosMark].position,
+					title: "Current Location\n" + oMarkers[sCurrentPosMark].title + 
+					((oMarkers[sCurrentPosMark].speed>0)?(" speed:" + oMarkers[sCurrentPosMark].speed): " parked")
+					});
+		}		
+		
+		var dEarliest = new Date(oDateRange.ntBegin);
+		var dLatest = (new Date(oDateRange.ntEnd));
+		$("#debug").append("<li>Number of Markers:" + nMarkersDrawn + " out of " + nDataPoints 
+			+"<br><b>Note</b> that program only shows unique markers</br></li>");
+		$("#debug").append("<li>Max speed:" + oMaxSpeed.speed +" date:" + (oMaxSpeed.date) + "</li>");
+		if(dEarliest && dLatest)
+		{
+			$("#debug").append("<li>Date Range:" + (dEarliest.toDateString()) + " to " + (dLatest.toDateString()) +"</li>");
+		}
+	}
+
+	function getYearMonthStr(a_oDate)
+	{
+		var sMonth = (a_oDate.getMonth() + 1);
+		sMonth = (sMonth < 10)? ("0"+sMonth) : (sMonth + "");
+		return a_oDate.getFullYear() + "-" + (sMonth);
+	}
+function computeAge()
+{
+	
+		var items = [[" - Initial", InitialRatedIdealRange, "N/A", InitialRatedExpectedRange,  "N/A", "0", "0", "0"]];
+		for(var o in oMonthofData)
+		{
+			var thisMonth = new Date();
+			var aDate = o.split("-");
+			var sPreviousMonth = "xxx";
+			if(aDate.length == 2)
+			{
+				thisMonth.setYear(aDate[0])
+				thisMonth.setMonth(aDate[1]);
+				thisMonth.setMonth(thisMonth.getMonth()-2);
+				sPreviousMonth = getYearMonthStr(thisMonth);
+			}
+			var oPreviousMonth = oMonthofData[sPreviousMonth];
+			//$("#debug").append("<li>blah "+ o +" "+sPreviousMonth +"</li>");
+			items.push([
+				oMonthofData[o].getYearMonth(),//year
+				oMonthofData[o].getAverageIdealRange(),// i range
+				(oPreviousMonth ? (oMonthofData[o].getIdealLoss(oPreviousMonth)+"%") : "N/A"),// irloss
+				oMonthofData[o].getAverageEstRange(),// est range
+				(oPreviousMonth ? (oMonthofData[o].getEstRangeLoss(oPreviousMonth)+"%") : "N/A"),// est range loss
+				oMonthofData[o].getMaxOdometer(),// odometer
+				oMonthofData[o].milesTravelled(),// miles driven
+				oMonthofData[o].getVersion()// version
+				])
+		}	
+		var oStartMonth = oMonthofData[getYearMonthStr(new Date(oDateRange.ntBegin))]
+		var oEndMonth = oMonthofData[getYearMonthStr((new Date(oDateRange.ntEnd)))]
+		/*
+		items.push([
+				"- Net ",
+				round2((oStartMonth.getAverageIdealRange() +oEndMonth.getAverageIdealRange()) /2),// i range
+				oStartMonth.getIdealLoss(oEndMonth),// irloss
+				round2((oStartMonth.getAverageEstRange()+oEndMonth.getAverageEstRange())/2),// est range
+				round2((oStartMonth.getEstRangeLoss()+oEndMonth.getEstRangeLoss())/2),// est range loss
+				oEndMonth.getMaxOdometer(),// odometer
+				oEndMonth.getMaxOdometer(),// miles driven
+				oEndMonth.getVersion()// version		
+		])
+		*/
+
+		$('#example').dataTable( {
+  "columns": [
+    { "type": "html" },
+    null,
+    null,
+    null,
+    null
+  ]
+} );
+		
+	   $('#batteryTable').DataTable( {
+        data: items,
+		iDisplayLength:24,
+        columns: [
+            { title: "Year Month", "type": "string"  },
+            { title: "Avg. Ideal Range", "type": "num" },
+            { title: "Ideal Range loss", "type": "num-fmt" },
+            { title: "Avg. Est. Range", "type": "num" },
+            { title: "Est. Range Loss", "type": "num-fmt" },
+			{ title: "Odometer (miles)", "type": "num" },
+			{ title: "Miles Driven", "type": "num" },
+			{ title: "Version", "type": "string" }
+        ]
+		} );
+	
+	$("#debug").append("<li>Overall Est Range Loss: " + (-oStartMonth.getEstRangeLoss(oEndMonth)) +"%</li>");
+	$("#debug").append("<li>Overall Ideal Range Loss: " + (-oStartMonth.getIdealLoss(oEndMonth)) +"%</li>");
+}
+
+	function round2(dVal)
+	{
+		return Math.round( 100 * dVal )/100;
+	}
+	function getRange(nCurrRange, nLevel)
+	{
+		return nCurrRange / (nLevel*.01);
+	}
+
+ function initMap() 
+ {
+  // Create a map object and specify the DOM element for display.
+  map = new google.maps.Map(document.getElementById('map'), {
+    center: {lat: 38.92, lng: -77.27879},
+    scrollwheel: true,
+    zoom: 9
+  });
+  loadMarkers();
+  waitThenDrawMarkers();
+}
+
+//collect a month's worth of results.
+ function MonthOfResults(sMonth)
+ {
+	this.yearMonth=sMonth;
+	var aIdealRange=[];
+	var aEstRange = [];
+	this._nMaxOdometer=0;
+	this._nMinOdometer = 99999999;
+	this.sMaxVersion = '';
+	
+	//functions
+	this.setOdometer =_odometer;
+	this.getMaxOdometer = _odometer;
+	this.setVersion = _getVersion;
+	this.getVersion = _getVersion;
+	this.setYearMonth = _yearMonth;
+	this.getYearMonth = _yearMonth;
+	this.addIdealRange = _addIdealRange;
+	this.addEstRange = _addEstRange;
+	this.getAverageIdealRange = _avgIdealRange;
+	this.getAverageEstRange = _avgEstRange;
+	this.milesTravelled = _milesTravelled
+	this.getIdealLoss = _idealLoss;
+	this.getEstRangeLoss = _estRangeLoss;
+	
+	function _idealLoss(oPrevMo)
+	{
+		//var InitialRatedIdealRange = 276;	//initial rated ideal range
+		//var InitialRatedExpectedRange = 240;	//initial rated expected range
+		var nPreviousIdealRange = InitialRatedIdealRange;
+		if(oPrevMo)
+		{
+			nPreviousIdealRange = oPrevMo.getAverageIdealRange();
+		}
+		var nAvgRange = _avgIdealRange();
+		return round2( 100 * (nPreviousIdealRange-nAvgRange)/nAvgRange );
+	}
+	
+	function _estRangeLoss(oPrevMo)
+	{
+		//var InitialRatedIdealRange = 276;	//initial rated ideal range
+		//var InitialRatedExpectedRange = 240;	//initial rated expected range
+		var nPreviousExpRange = InitialRatedExpectedRange;
+		if(oPrevMo)
+		{
+			nPreviousExpRange = oPrevMo.getAverageEstRange();
+		}
+		var nAvgRange = _avgEstRange();
+		return round2( 100 * (nPreviousExpRange-nAvgRange)/nAvgRange );
+	}
+
+	function _milesTravelled()
+	{
+		return round2(this._nMaxOdometer - this._nMinOdometer);
+	}
+	function _odometer(nVal)
+	{
+		if(nVal)
+		{
+			if(nVal>this._nMaxOdometer)
+			{
+				this._nMaxOdometer = nVal;
+			}
+			else if (nVal < this._nMinOdometer)
+			{
+				this._nMinOdometer = nVal;
+			}
+		}
+		return round2(this._nMaxOdometer);
+	}
+	
+	function _yearMonth(sYearMonth)
+	{
+		if(sYearMonth)
+		{
+			this.yearMonth = sYearMonth
+		}
+		return this.yearMonth;
+	}
+	
+	function _getVersion(sVersion)
+	{
+		if(sVersion)
+		{
+			this.sMaxVersion = sVersion
+		}
+		return this.sMaxVersion;
+	}
+	
+	function _addEstRange(nCurrRange, nLevel)
+	{
+		//values seem more consistent when battery level is same
+		if(nLevel>=85 && nLevel <= 91) 
+			{	return aEstRange.push((nCurrRange / (nLevel*.01))) }
+	}
+	
+	function _addIdealRange(nCurrRange, nLevel)
+	{
+		//values seem more consistent when battery level is same
+		if(nLevel>=85 && nLevel <= 91)
+			{return aIdealRange.push((nCurrRange / (nLevel*.01)))}
+	}
+
+	function _avgEstRange()
+	{
+		return round2(aEstRange.average());
+	}
+
+	function _avgIdealRange()
+	{
+		return round2(aIdealRange.average());
+	}
+ }
+
+ function getDateToTSStringFirstDay(a_oDate)
+{
+	//YYYY-MM-DD%20HH:NN:SS
+	if(!a_oDate)
+	{
+		a_oDate = new Date();
+	}
+	var sMonth = (a_oDate.getMonth() + 1);
+	sMonth = (sMonth < 10)? ("0"+sMonth) : (sMonth + "");
+	return (a_oDate.getFullYear()+0) + "-" + sMonth + "-01%2000:00:00"
+}
+
+/*
+Valid parameters:
+api_key (string) Read API Key for this specific Channel (optional--no key required for public channels)
+results (integer) Number of entries to retrieve, 8000 max, default of 100 (optional)
+days (integer) Number of 24-hour periods before now to include in feed (optional)
+start (datetime) Start date in format YYYY-MM-DD%20HH:NN:SS (optional)
+end (datetime) End date in format YYYY-MM-DD%20HH:NN:SS (optional)
+timezone (string) Timezone identifier for this request (optional)
+offset (integer) Timezone offset that results should be displayed in. Please use the timezone parameter for greater accuracy. (optional)
+status (true/false) Include status updates in feed by setting "status=true" (optional)
+metadata (true/false) Include Channel's metadata by setting "metadata=true" (optional)
+location (true/false) Include latitude, longitude, and elevation in feed by setting "location=true" (optional)
+min (decimal) Minimum value to include in response (optional)
+max (decimal) Maximum value to include in response (optional)
+round (integer) Round to this many decimal places (optional)
+-----timescale (integer or string) Get first value in this many minutes, valid values: 10, 15, 20, 30, 60, 240, 720, 1440, "daily" (optional)
+sum (integer or string) Get sum of this many minutes, valid values: 10, 15, 20, 30, 60, 240, 720, 1440, "daily" (optional)
+average (integer or string) Get average of this many minutes, valid values: 10, 15, 20, 30, 60, 240, 720, 1440, "daily" (optional)
+median (integer or string) Get median of this many minutes, valid values: 10, 15, 20, 30, 60, 240, 720, 1440, "daily" (optional)
+callback (string) Function name to be used for JSONP cross-domain requests (optional)
+			var sLossI = round2(100 * (nPrevI-nPerI)/nPerI)+"%"
+		var sLossE = round2( 100 * (nPrevE-nPerE)/nPerE )+"%"
+				//var sDate = (this["created_at"] + "").substring(0,10);
+				//BUG: this is hte data for the previous month
+		items.push( [sCurrMonth,round2(nPerI), sLossI, round2(nPerE), sLossE, round2(nOdometer), round2(nOdometer-nOdometerDifference), sVersion] );
+			
+				//hold the previous values
+				nPrevI = nPerI;
+				nPrevE = nPerE;
+				
+				//reset averages
+				oAvgIdeal = {sum:0, cnt:0};
+				oAvgEst = {sum:0, cnt:0};
+				
+				nOdometerDifference = nOdometer;
+
+		//oMonthofData[sCurrMonth].getYearMonth()
+
+		//oMonthofData[sCurrMonth].getMaxOdometer();
+		//oMonthofData[sCurrMonth].getVersion()
+		//oMonthofData[sCurrMonth].getAverageIdealRange()
+		//oMonthofData[sCurrMonth].getAverageEstRange()
+
+				*/
+
+
+
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-550134-9', 'scienceontheweb.net');
+  ga('send', 'pageview');
+
+
+</script>
+</head>
+
+	<body>
+		<h3>Miscellaneous Data</h3>
+		<ul id="debug"></ul>
+		<div id="map"></div>
+		<div id="rangeTable">
+			<h3>Range Information - Monthly Values</h3>
+			<table id="batteryTable" class="display" width="80%"></table>
+		</div>
+		More on <a href="https://thingspeak.com/channels/39919/private_show">thingspeak</a>.
+	</body>
+	<script async defer
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCg7dti-2ObZtnU9z_-5teyfyLCUajMur4&signed_in=true&callback=initMap"></script>
+
+	</html>
