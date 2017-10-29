@@ -4,5 +4,7 @@
         "username": "xxxxx",
         "password": "xxxxxx",
         "output_file": "stream_output.txt",
-		"debug": "1"
+		"debug": "1",
+		"mongodburl": "mongodb://user:pass@ds017896.mlab.com:17896/tesla",
+		"mongocollection" : "tesla_collection"
 }
