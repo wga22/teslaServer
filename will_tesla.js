@@ -17,16 +17,31 @@ Object.defineProperty(Object.prototype, "extend", {
 });
 
 
-var util = require('util');
-var http = require('http');
-var querystring = require("querystring");
+const util = require('util');
+const http = require('http');
+const querystring = require("querystring");
 //var express    = require("express");
-//var mysql      = require('mysql');
-var teslams = require('teslams');
+const mongodbClient      = require('mongodb').MongoClient, assert = require("assert");
+const teslams = require('teslams');
+
+var configJSON = {};
 var oResults = {};
 var nFieldsToLoad = 0;		//how many different function calls to make
 var fTesting = true;
 main();
+
+function writeValuesToMongoDB(tslaVals)
+{
+	mongodbClient.connect(configJSON.mongodburl, 
+		function(err,db) 
+		{
+			assert.equal(null, err);
+			if(fTesting) console.log('mongodb connect success ');
+			var collection = db.collection(configJSON.mongocollection);
+			collection.insertOne(tslaVals, function(err, r){db.close()});
+		}); //connect
+}
+
 function writeValuesToAwardspace(tslaVals)
 {
 /*
@@ -159,12 +174,8 @@ function main()
 	try {
 
 		var jsonString = fs.readFileSync("./tesla_config.json").toString();
-		var config = JSON.parse(jsonString);
-		var creds = { 
-			email: config.username, 
-			password: config.password 
-		};
-		fTesting = (config.debug == "1" || config.debug == "true");
+		configJSON = JSON.parse(jsonString);
+		fTesting = (configJSON.debug == "1" || configJSON.debug == "true");
 	} catch (err) 
 	{
 
@@ -183,7 +194,7 @@ function main()
 		process.exit(1);
 	}
 	
-	teslams.get_vid( { email: creds.email, password: creds.password }, function ( vid ) {
+	teslams.get_vid( { email: configJSON.username, password: configJSON.password }, function ( vid ) {
 		if (vid == undefined) {
 			console.log("Error: Undefined vehicle id");
 		} else {
@@ -203,30 +214,27 @@ function main()
 		}
 	  }
 	);
-
-	
 }
 
 // Generic callback function to print the return value
 function storeVals( jsonVals ) 
 {
-	//print the values
-	if(fTesting) pr(jsonVals);
-	//oResults.extend(jsonVals);
 	//append these results to the main JSON object with results
 	oResults = merge_options(oResults, jsonVals);
 	nFieldsToLoad--;
 	//when you are on the last of 3 field sets, then write them all to thingspeak
 	if(nFieldsToLoad <=0)
 	{
+		oResults.timestamp = new Date();
+		if(fTesting) pr(oResults);
 		writeValuesToThingSpeak(oResults);
+		writeValuesToMongoDB(oResults);
 	}
 }
 
 // Generic callback function to print the return value
 function pr( jsonVals ) {
 	console.log( util.inspect( jsonVals ) );
-	//writeValuesToThingSpeak(jsonVals)
 }
 
 /**
